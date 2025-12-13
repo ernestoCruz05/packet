@@ -14,6 +14,7 @@ import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useTerminals } from "../context/TerminalContext";
 import { TerminalSession } from "../types/terminal";
+import { highlightCiscoOutput } from "../utils/ciscoHighlight";
 import "@xterm/xterm/css/xterm.css";
 
 interface TerminalPanelProps {
@@ -151,12 +152,14 @@ export function TerminalPanel({ session, isActive }: TerminalPanelProps) {
                 sessionIdRef.current = telnetSessionId;
                 setSessionId(session.id, telnetSessionId);
 
-                // Listen for telnet output
+                // Listen for telnet output with Cisco syntax highlighting
                 unlistenOutput = await listen<{ sessionId: string; data: string }>(
                     "telnet-output",
                     (event) => {
                         if (event.payload.sessionId === telnetSessionId) {
-                            term.write(event.payload.data);
+                            // Apply Cisco syntax highlighting to the output
+                            const highlightedData = highlightCiscoOutput(event.payload.data);
+                            term.write(highlightedData);
                         }
                     }
                 );

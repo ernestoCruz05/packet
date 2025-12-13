@@ -30,6 +30,7 @@ function BroadcastIcon() {
 export function BroadcastInput() {
     const [history, setHistory] = useState<string[]>([]);
     const [currentLine, setCurrentLine] = useState("");
+    const [outOfSync, setOutOfSync] = useState(false);
     const inputRef = useRef<HTMLInputElement>(null);
     const { broadcastKeystroke, sessions } = useTerminals();
 
@@ -59,6 +60,7 @@ export function BroadcastInput() {
                 });
             }
             setCurrentLine("");
+            setOutOfSync(false); // Reset sync state on new command
             return;
         }
 
@@ -70,8 +72,12 @@ export function BroadcastInput() {
         }
 
         // Handle Tab (autocomplete in Cisco)
+        // Clear local input since the router will echo back the completed command
+        // We can't know what the completion is without parsing router output
         if (e.key === "Tab") {
             broadcastKeystroke("\t");
+            // Mark as out of sync - the device has autocompleted but we don't know to what
+            setOutOfSync(true);
             return;
         }
 
@@ -79,6 +85,7 @@ export function BroadcastInput() {
         if (e.ctrlKey && e.key.toLowerCase() === "c") {
             broadcastKeystroke("\x03");
             setCurrentLine("");
+            setOutOfSync(false);
             return;
         }
 
@@ -104,6 +111,7 @@ export function BroadcastInput() {
         if (e.ctrlKey && e.key.toLowerCase() === "u") {
             broadcastKeystroke("\x15");
             setCurrentLine("");
+            setOutOfSync(false);
             return;
         }
 
@@ -220,7 +228,7 @@ export function BroadcastInput() {
             </div>
 
             <div className="broadcast-form">
-                <div className="command-input-wrapper">
+                <div className={`command-input-wrapper ${outOfSync ? "out-of-sync" : ""}`}>
                     <span className="command-prompt">$</span>
                     <div className="command-highlight">{highlightCommand(currentLine)}</div>
                     <input
@@ -237,9 +245,20 @@ export function BroadcastInput() {
                         spellCheck={false}
                         disabled={totalCount === 0}
                     />
+                    {outOfSync && (
+                        <span className="sync-indicator" title="Tab completion handled by device - input may not match terminal">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                                <path d="M10.29 3.86L1.82 18a2 2 0 0 0 1.71 3h16.94a2 2 0 0 0 1.71-3L13.71 3.86a2 2 0 0 0-3.42 0z" />
+                                <line x1="12" y1="9" x2="12" y2="13" />
+                                <line x1="12" y1="17" x2="12.01" y2="17" />
+                            </svg>
+                        </span>
+                    )}
                 </div>
                 <div className="broadcast-hint">
-                    {enabledCount > 0 ? (
+                    {outOfSync ? (
+                        <span className="hint-warning">Tab pressed - device autocompleted, local input may differ</span>
+                    ) : enabledCount > 0 ? (
                         <span className="hint-active">Live mode - keystrokes sent immediately</span>
                     ) : (
                         <span className="hint-disabled">No terminals receiving broadcast</span>

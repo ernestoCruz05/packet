@@ -674,6 +674,30 @@ body {
   font-style: italic;
 }
 
+.broadcast-hint .hint-warning {
+  color: var(--accent-warning);
+}
+
+/* Sync Indicator */
+.command-input-wrapper.out-of-sync {
+  border-color: var(--accent-warning);
+}
+
+.sync-indicator {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent-warning);
+  flex-shrink: 0;
+  margin-left: var(--space-sm);
+  animation: pulse 1.5s ease-in-out infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
 /* Syntax Highlighting */
 .hl-command {
   color: var(--syntax-command);
