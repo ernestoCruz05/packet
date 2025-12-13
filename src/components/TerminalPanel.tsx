@@ -26,6 +26,31 @@ const fitAddonMap = new Map<string, FitAddon>();
 // Store backend session IDs (pty/telnet) globally so they survive React remounts
 const backendSessionIdMap = new Map<string, string>();
 
+// Store unlisten functions globally - these should NOT be called on React unmount
+// They should only be cleaned up when the session is actually closed
+const unlistenMap = new Map<string, { output?: () => void; status?: () => void }>();
+
+/**
+ * Clean up all global state for a session when it's permanently removed.
+ * This should be called from TerminalContext when a session is deleted.
+ */
+export function cleanupTerminalSession(sessionId: string): void {
+    console.log(`[TerminalPanel] Cleaning up session ${sessionId}`);
+
+    // Unsubscribe from backend events
+    const listeners = unlistenMap.get(sessionId);
+    if (listeners) {
+        listeners.output?.();
+        listeners.status?.();
+        unlistenMap.delete(sessionId);
+    }
+
+    // Clear all other global state
+    initializedSessions.delete(sessionId);
+    fitAddonMap.delete(sessionId);
+    backendSessionIdMap.delete(sessionId);
+}
+
 interface TerminalPanelProps {
     session: TerminalSession;
     isActive: boolean;
@@ -162,9 +187,6 @@ export function TerminalPanel({ session, isActive }: TerminalPanelProps) {
         fitAddonMap.set(session.id, fitAddon);
         setTerminal(session.id, terminal);
 
-        let unlistenOutput: (() => void) | null = null;
-        let unlistenStatus: (() => void) | null = null;
-
         if (session.connectionType === "local") {
             // Local PTY session
             initLocalSession(terminal);
@@ -186,7 +208,8 @@ export function TerminalPanel({ session, isActive }: TerminalPanelProps) {
                 backendSessionIdMap.set(session.id, ptyId);
                 setSessionId(session.id, ptyId);
 
-                unlistenOutput = await listen<{ ptyId: string; data: string }>(
+                // Store unlisten globally - DO NOT clean up on React unmount
+                const unlistenOutput = await listen<{ ptyId: string; data: string }>(
                     "pty-output",
                     (event) => {
                         if (event.payload.ptyId === ptyId) {
@@ -194,6 +217,7 @@ export function TerminalPanel({ session, isActive }: TerminalPanelProps) {
                         }
                     }
                 );
+                unlistenMap.set(session.id, { output: unlistenOutput });
 
                 // Use the ptyId directly (captured in closure) instead of ref
                 // This ensures input works even after React remounts
@@ -223,7 +247,8 @@ export function TerminalPanel({ session, isActive }: TerminalPanelProps) {
                 setSessionId(session.id, telnetSessionId);
 
                 // Listen for telnet output with Cisco syntax highlighting
-                unlistenOutput = await listen<{ sessionId: string; data: string }>(
+                // Store unlisten globally - DO NOT clean up on React unmount
+                const unlistenOutput = await listen<{ sessionId: string; data: string }>(
                     "telnet-output",
                     (event) => {
                         if (event.payload.sessionId === telnetSessionId) {
@@ -235,7 +260,7 @@ export function TerminalPanel({ session, isActive }: TerminalPanelProps) {
                 );
 
                 // Listen for connection status updates
-                unlistenStatus = await listen<{ sessionId: string; status: string; message: string }>(
+                const unlistenStatus = await listen<{ sessionId: string; status: string; message: string }>(
                     "telnet-status",
                     (event) => {
                         if (event.payload.sessionId === telnetSessionId) {
@@ -247,6 +272,9 @@ export function TerminalPanel({ session, isActive }: TerminalPanelProps) {
                         }
                     }
                 );
+
+                // Store both unlisten functions globally
+                unlistenMap.set(session.id, { output: unlistenOutput, status: unlistenStatus });
 
                 // Forward user input to telnet
                 // Use telnetSessionId directly (captured in closure) instead of ref
@@ -269,10 +297,11 @@ export function TerminalPanel({ session, isActive }: TerminalPanelProps) {
             }
         }
 
+        // DO NOT clean up event listeners on React unmount!
+        // The listeners need to persist across group changes.
+        // They will be cleaned up when the session is removed from context.
         return () => {
-            console.log(`[Terminal ${session.id}] Cleanup called`);
-            unlistenOutput?.();
-            unlistenStatus?.();
+            console.log(`[Terminal ${session.id}] Component unmounting (listeners preserved)`);
         };
     }, [session.id, session.connectionType, session.telnetInfo]);
 

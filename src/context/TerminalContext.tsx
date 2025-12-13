@@ -17,6 +17,7 @@ import { Terminal } from "@xterm/xterm";
 import { TerminalSession, TerminalState, LayoutMode, TabGroup } from "../types/terminal";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
+import { cleanupTerminalSession } from "../components/TerminalPanel";
 
 /** Predefined colors for groups */
 const GROUP_COLORS = [
@@ -204,6 +205,10 @@ export function TerminalProvider({ children }: TerminalProviderProps) {
                     invoke("disconnect_telnet", { sessionId: session.sessionId }).catch(console.error);
                 }
             }
+
+            // Clean up frontend terminal state (event listeners, etc.)
+            cleanupTerminalSession(id);
+
             const remaining = prev.filter((s) => s.id !== id);
 
             // If we're removing the active session, switch to another
