@@ -15,11 +15,72 @@ import { Terminal } from "@xterm/xterm";
 export type ConnectionType = "local" | "telnet";
 
 /**
+ * Split direction for grid layouts
+ */
+export type SplitDirection = "horizontal" | "vertical";
+
+/**
  * Telnet connection parameters for GNS3 devices
  */
 export interface TelnetConnection {
     host: string;
     port: number;
+}
+
+/**
+ * A pane in the split layout - either contains a terminal or is split into children
+ */
+export interface SplitPane {
+    /** Unique identifier for the pane */
+    id: string;
+
+    /** If this is a leaf pane, the terminal session ID it contains */
+    sessionId?: string;
+
+    /** If this is a split pane, the direction of the split */
+    direction?: SplitDirection;
+
+    /** Child panes if this is a split */
+    children?: SplitPane[];
+
+    /** Size ratio (0-1) relative to siblings */
+    size: number;
+}
+
+/**
+ * Layout mode for terminal display
+ */
+export type LayoutMode = "tabs" | "grid";
+
+/**
+ * A tab group for organizing related terminals
+ */
+export interface TabGroup {
+    /** Unique identifier for the group */
+    id: string;
+
+    /** Display name for the group */
+    name: string;
+
+    /** Color for the group indicator */
+    color: string;
+}
+
+/**
+ * A workspace/group containing one or more terminal panes in a split layout
+ */
+export interface Workspace {
+    /** Unique identifier for the workspace */
+    id: string;
+
+    /** Display name for the workspace tab */
+    name: string;
+
+    /** Root pane of the split layout */
+    rootPane: SplitPane;
+
+    /** List of session IDs in this workspace (for quick access) */
+    sessionIds: string[];
 }
 
 /**
@@ -47,6 +108,9 @@ export interface TerminalSession {
 
     /** Backend session identifier - PTY ID or telnet session ID (null until connected) */
     sessionId: string | null;
+
+    /** Group ID this session belongs to (null for ungrouped) */
+    groupId: string | null;
 }
 
 /**
@@ -58,11 +122,20 @@ export interface TerminalState {
     /** Array of all active terminal sessions */
     sessions: TerminalSession[];
 
+    /** Array of tab groups */
+    groups: TabGroup[];
+
     /** ID of the currently active/visible terminal session */
     activeSessionId: string | null;
 
+    /** ID of the currently active group (null shows all) */
+    activeGroupId: string | null;
+
+    /** Current layout mode (tabs or grid) */
+    layoutMode: LayoutMode;
+
     /** Creates a new local terminal session */
-    addSession: () => void;
+    addSession: (groupId?: string | null) => void;
 
     /** Creates a new telnet session to a GNS3 device */
     addTelnetSession: (host: string, port: number, name?: string) => void;
@@ -85,8 +158,30 @@ export interface TerminalState {
     /** Associates a backend session ID (PTY or telnet) with a session */
     setSessionId: (id: string, sessionId: string) => void;
 
-    /** Sends a single keystroke to all broadcast-enabled terminals */
-    broadcastKeystroke: (key: string) => void;
+    /** 
+     * Sends a single keystroke to broadcast-enabled terminals
+     * @param key - The keystroke to send
+     * @param groupId - Optional group filter (null = all, string = specific group)
+     */
+    broadcastKeystroke: (key: string, groupId?: string | null) => void;
+
+    /** Toggles between tabs and grid layout mode */
+    toggleLayoutMode: () => void;
+
+    /** Creates a new tab group */
+    addGroup: (name: string) => void;
+
+    /** Removes a tab group */
+    removeGroup: (id: string) => void;
+
+    /** Renames a tab group */
+    renameGroup: (id: string, name: string) => void;
+
+    /** Sets the active group filter */
+    setActiveGroup: (id: string | null) => void;
+
+    /** Moves a session to a group */
+    moveToGroup: (sessionId: string, groupId: string | null) => void;
 }
 
 /**

@@ -6,11 +6,25 @@
  * - Real-time keystroke broadcasting (each key sent immediately)
  * - Command history navigation (arrow keys)
  * - Cisco keyword highlighting and suggestions
+ * - Vim-style commands:
+ *   :l or :local - broadcast to current group only
+ *   :a or :all   - broadcast to all terminals
+ *   :g <name>    - broadcast to specific group
+ *   :m <pattern> <group> - move terminals matching pattern to group
+ *   :m <pattern>  - remove terminals from group
+ *   :s <group>   - switch to viewing a group (:s all for all)
+ * 
+ * Wildcard patterns for :m command:
+ *   * matches any characters (e.g., R-* matches R-1, R-2, R-CID1)
+ *   ? matches single character (e.g., R-? matches R-1, R-2 but not R-10)
  */
 
-import { useState, useRef, useCallback } from "react";
+import { useState, useRef, useCallback, useMemo } from "react";
 import { useTerminals } from "../context/TerminalContext";
 import { CiscoKeywords } from "../types/terminal";
+
+/** Broadcast target modes */
+type BroadcastMode = "all" | "group" | "custom";
 
 /**
  * Broadcast status icon
@@ -28,19 +42,176 @@ function BroadcastIcon() {
 }
 
 export function BroadcastInput() {
-    const [history, setHistory] = useState<string[]>([]);
+    const [_history, setHistory] = useState<string[]>([]);
     const [currentLine, setCurrentLine] = useState("");
     const [outOfSync, setOutOfSync] = useState(false);
+    const [broadcastMode, setBroadcastMode] = useState<BroadcastMode>("all");
+    const [customGroupId, setCustomGroupId] = useState<string | null>(null);
     const inputRef = useRef<HTMLInputElement>(null);
-    const { broadcastKeystroke, sessions } = useTerminals();
+    const { broadcastKeystroke, sessions, groups, activeGroupId, moveToGroup, setActiveGroup } = useTerminals();
 
-    const enabledCount = sessions.filter((s) => s.broadcastEnabled).length;
+    // Calculate which sessions will receive broadcasts based on mode
+    const targetSessions = useMemo(() => {
+        let filtered = sessions.filter(s => s.broadcastEnabled);
+
+        if (broadcastMode === "group") {
+            // Broadcast to current group only
+            if (activeGroupId) {
+                filtered = filtered.filter(s => s.groupId === activeGroupId);
+            }
+        } else if (broadcastMode === "custom" && customGroupId) {
+            // Broadcast to specific group
+            filtered = filtered.filter(s => s.groupId === customGroupId);
+        }
+        // "all" mode uses all enabled sessions
+
+        return filtered;
+    }, [sessions, broadcastMode, activeGroupId, customGroupId]);
+
+    const enabledCount = targetSessions.length;
     const totalCount = sessions.length;
+
+    // Get current group name for display
+    const currentGroupName = useMemo(() => {
+        if (broadcastMode === "group" && activeGroupId) {
+            return groups.find(g => g.id === activeGroupId)?.name || "Current Group";
+        }
+        if (broadcastMode === "custom" && customGroupId) {
+            return groups.find(g => g.id === customGroupId)?.name || "Unknown";
+        }
+        return null;
+    }, [broadcastMode, activeGroupId, customGroupId, groups]);
+
+    /**
+     * Broadcast keystroke with current mode filter applied
+     */
+    const broadcast = useCallback((key: string) => {
+        if (broadcastMode === "group" && activeGroupId) {
+            broadcastKeystroke(key, activeGroupId);
+        } else if (broadcastMode === "custom" && customGroupId) {
+            broadcastKeystroke(key, customGroupId);
+        } else {
+            // "all" mode - no filter
+            broadcastKeystroke(key);
+        }
+    }, [broadcastKeystroke, broadcastMode, activeGroupId, customGroupId]);
+
+    /**
+     * Check for vim-style commands
+     */
+    const checkVimCommand = useCallback((line: string): boolean => {
+        const trimmed = line.trim().toLowerCase();
+
+        // :l or :local - broadcast to current group
+        if (trimmed === ":l" || trimmed === ":local") {
+            if (activeGroupId) {
+                setBroadcastMode("group");
+                setCurrentLine("");
+                return true;
+            }
+        }
+
+        // :a or :all - broadcast to all
+        if (trimmed === ":a" || trimmed === ":all") {
+            setBroadcastMode("all");
+            setCustomGroupId(null);
+            setCurrentLine("");
+            return true;
+        }
+
+        // :g <name> - broadcast to specific group
+        if (trimmed.startsWith(":g ") || trimmed.startsWith(":group ")) {
+            const groupName = line.slice(line.indexOf(" ") + 1).trim();
+            const group = groups.find(g => g.name.toLowerCase() === groupName.toLowerCase());
+            if (group) {
+                setBroadcastMode("custom");
+                setCustomGroupId(group.id);
+                setCurrentLine("");
+                return true;
+            }
+        }
+
+        // :m <terminal> <group> - move terminal to group
+        // :m <terminal> - remove terminal from group (move to ungrouped)
+        // Supports wildcards: :m R-* Routers (moves all terminals starting with R-)
+        if (trimmed.startsWith(":m ") || trimmed.startsWith(":move ")) {
+            const args = line.slice(line.indexOf(" ") + 1).trim().split(/\s+/);
+            if (args.length >= 1) {
+                const terminalPattern = args[0];
+                const groupName = args.slice(1).join(" ") || null;
+
+                // Convert wildcard pattern to regex
+                // * matches any characters, ? matches single character
+                const regexPattern = terminalPattern
+                    .replace(/[.+^${}()|[\]\\]/g, '\\$&') // Escape special regex chars
+                    .replace(/\*/g, '.*')  // * -> .*
+                    .replace(/\?/g, '.');  // ? -> .
+                const regex = new RegExp(`^${regexPattern}$`, 'i');
+
+                // Find all matching terminals
+                const matchingSessions = sessions.filter(s => regex.test(s.name));
+
+                if (matchingSessions.length > 0) {
+                    if (groupName) {
+                        // Find group and move terminals to it
+                        const group = groups.find(g =>
+                            g.name.toLowerCase().includes(groupName.toLowerCase())
+                        );
+                        if (group) {
+                            matchingSessions.forEach(s => moveToGroup(s.id, group.id));
+                            console.log(`[VimCmd] Moved ${matchingSessions.length} terminals to ${group.name}`);
+                            setCurrentLine("");
+                            return true;
+                        }
+                    } else {
+                        // Remove from group
+                        matchingSessions.forEach(s => moveToGroup(s.id, null));
+                        console.log(`[VimCmd] Removed ${matchingSessions.length} terminals from groups`);
+                        setCurrentLine("");
+                        return true;
+                    }
+                }
+            }
+        }
+
+        // :s <group> - switch to viewing a specific group
+        if (trimmed.startsWith(":s ") || trimmed.startsWith(":switch ")) {
+            const groupName = line.slice(line.indexOf(" ") + 1).trim();
+            if (groupName.toLowerCase() === "all") {
+                setActiveGroup(null);
+                setCurrentLine("");
+                return true;
+            }
+            const group = groups.find(g => g.name.toLowerCase().includes(groupName.toLowerCase()));
+            if (group) {
+                setActiveGroup(group.id);
+                setCurrentLine("");
+                return true;
+            }
+        }
+
+        // :? or :help - show help
+        if (trimmed === ":?" || trimmed === ":help") {
+            // Just clear - help is shown in placeholder
+            setCurrentLine("");
+            return true;
+        }
+
+        return false;
+    }, [activeGroupId, groups, sessions, moveToGroup, setActiveGroup]);
 
     /**
      * Handle keyboard events and broadcast keystrokes in real-time
      */
     const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLInputElement>) => {
+        // Check for vim commands on Enter, even with 0 enabled
+        if (e.key === "Enter" && currentLine.startsWith(":")) {
+            e.preventDefault();
+            if (checkVimCommand(currentLine)) {
+                return;
+            }
+        }
+
         if (enabledCount === 0) return;
 
         // Prevent default for special keys we handle
@@ -52,7 +223,7 @@ export function BroadcastInput() {
 
         // Handle Enter - send carriage return and track history
         if (e.key === "Enter") {
-            broadcastKeystroke("\r");
+            broadcast("\r");
             if (currentLine.trim()) {
                 setHistory(prev => {
                     if (prev[prev.length - 1] === currentLine) return prev;
@@ -66,7 +237,7 @@ export function BroadcastInput() {
 
         // Handle Backspace
         if (e.key === "Backspace") {
-            broadcastKeystroke("\x7f"); // DEL character
+            broadcast("\x7f"); // DEL character
             setCurrentLine(prev => prev.slice(0, -1));
             return;
         }
@@ -75,7 +246,7 @@ export function BroadcastInput() {
         // Clear local input since the router will echo back the completed command
         // We can't know what the completion is without parsing router output
         if (e.key === "Tab") {
-            broadcastKeystroke("\t");
+            broadcast("\t");
             // Mark as out of sync - the device has autocompleted but we don't know to what
             setOutOfSync(true);
             return;
@@ -83,7 +254,7 @@ export function BroadcastInput() {
 
         // Handle Ctrl+C (interrupt)
         if (e.ctrlKey && e.key.toLowerCase() === "c") {
-            broadcastKeystroke("\x03");
+            broadcast("\x03");
             setCurrentLine("");
             setOutOfSync(false);
             return;
@@ -91,25 +262,25 @@ export function BroadcastInput() {
 
         // Handle Ctrl+D (EOF)
         if (e.ctrlKey && e.key.toLowerCase() === "d") {
-            broadcastKeystroke("\x04");
+            broadcast("\x04");
             return;
         }
 
         // Handle Ctrl+Z (suspend)
         if (e.ctrlKey && e.key.toLowerCase() === "z") {
-            broadcastKeystroke("\x1a");
+            broadcast("\x1a");
             return;
         }
 
         // Handle Ctrl+L (clear screen)
         if (e.ctrlKey && e.key.toLowerCase() === "l") {
-            broadcastKeystroke("\x0c");
+            broadcast("\x0c");
             return;
         }
 
         // Handle Ctrl+U (clear line)
         if (e.ctrlKey && e.key.toLowerCase() === "u") {
-            broadcastKeystroke("\x15");
+            broadcast("\x15");
             setCurrentLine("");
             setOutOfSync(false);
             return;
@@ -117,65 +288,70 @@ export function BroadcastInput() {
 
         // Handle Ctrl+W (delete word)
         if (e.ctrlKey && e.key.toLowerCase() === "w") {
-            broadcastKeystroke("\x17");
+            broadcast("\x17");
             setCurrentLine(prev => prev.replace(/\S+\s*$/, ""));
             return;
         }
 
         // Handle Ctrl+A (go to beginning)
         if (e.ctrlKey && e.key.toLowerCase() === "a") {
-            broadcastKeystroke("\x01");
+            broadcast("\x01");
             return;
         }
 
         // Handle Ctrl+E (go to end)
         if (e.ctrlKey && e.key.toLowerCase() === "e") {
-            broadcastKeystroke("\x05");
+            broadcast("\x05");
             return;
         }
 
         // Handle arrow keys (for CLI history in Cisco)
         if (e.key === "ArrowUp") {
-            broadcastKeystroke("\x1b[A");
+            broadcast("\x1b[A");
             return;
         }
         if (e.key === "ArrowDown") {
-            broadcastKeystroke("\x1b[B");
+            broadcast("\x1b[B");
             return;
         }
         if (e.key === "ArrowRight") {
-            broadcastKeystroke("\x1b[C");
+            broadcast("\x1b[C");
             return;
         }
         if (e.key === "ArrowLeft") {
-            broadcastKeystroke("\x1b[D");
+            broadcast("\x1b[D");
             return;
         }
 
         // Handle Escape
         if (e.key === "Escape") {
-            broadcastKeystroke("\x1b");
+            broadcast("\x1b");
             return;
         }
-    }, [enabledCount, broadcastKeystroke, currentLine]);
+    }, [enabledCount, broadcast, currentLine, checkVimCommand]);
 
     /**
-     * Handle regular character input
+     * Handle regular character input - skip broadcasting for vim commands
      */
     const handleInput = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
         const newValue = e.target.value;
         const oldValue = currentLine;
 
+        setCurrentLine(newValue);
+
+        // Don't broadcast vim commands
+        if (newValue.startsWith(":")) {
+            return;
+        }
+
         // Find what was added (simple append detection)
         if (newValue.length > oldValue.length) {
             const added = newValue.slice(oldValue.length);
             for (const char of added) {
-                broadcastKeystroke(char);
+                broadcast(char);
             }
         }
-
-        setCurrentLine(newValue);
-    }, [currentLine, broadcastKeystroke]);
+    }, [currentLine, broadcast]);
 
     /**
      * Highlight network keywords in the current line display
@@ -206,31 +382,45 @@ export function BroadcastInput() {
         });
     };
 
+    // Get mode indicator text
+    const getModeLabel = () => {
+        if (broadcastMode === "group" && currentGroupName) {
+            return `Group: ${currentGroupName}`;
+        }
+        if (broadcastMode === "custom" && currentGroupName) {
+            return `Group: ${currentGroupName}`;
+        }
+        return "All";
+    };
+
+    const isVimCommand = currentLine.startsWith(":");
+
     return (
         <div className="broadcast-panel">
             <div className="broadcast-header">
                 <div className="broadcast-status">
                     <BroadcastIcon />
                     <span className="broadcast-label">Broadcast</span>
+                    <span className={`broadcast-mode ${broadcastMode}`} onClick={() => setBroadcastMode("all")} title="Click to reset to All">
+                        {getModeLabel()}
+                    </span>
                     {totalCount > 0 ? (
                         <span className="broadcast-count">
-                            {enabledCount} of {totalCount} terminal{totalCount !== 1 ? "s" : ""}
+                            {enabledCount} of {totalCount}
                         </span>
                     ) : (
-                        <span className="broadcast-count muted">No active terminals</span>
+                        <span className="broadcast-count muted">No terminals</span>
                     )}
                 </div>
-                {history.length > 0 && (
-                    <span className="history-indicator">
-                        {history.length} command{history.length !== 1 ? "s" : ""} in history
-                    </span>
-                )}
+                <span className="vim-commands-hint">
+                    :l (group) :a (all) :g name
+                </span>
             </div>
 
             <div className="broadcast-form">
-                <div className={`command-input-wrapper ${outOfSync ? "out-of-sync" : ""}`}>
-                    <span className="command-prompt">$</span>
-                    <div className="command-highlight">{highlightCommand(currentLine)}</div>
+                <div className={`command-input-wrapper ${outOfSync ? "out-of-sync" : ""} ${isVimCommand ? "vim-mode" : ""}`}>
+                    <span className="command-prompt">{isVimCommand ? ":" : "$"}</span>
+                    <div className="command-highlight">{isVimCommand ? currentLine.slice(1) : highlightCommand(currentLine)}</div>
                     <input
                         ref={inputRef}
                         type="text"
@@ -238,7 +428,7 @@ export function BroadcastInput() {
                         onChange={handleInput}
                         onKeyDown={handleKeyDown}
                         placeholder={enabledCount > 0
-                            ? "Type to broadcast keystrokes..."
+                            ? "Type to broadcast... (:? for commands)"
                             : "Double-click tabs to enable broadcast"}
                         className="command-input"
                         autoComplete="off"
@@ -256,10 +446,12 @@ export function BroadcastInput() {
                     )}
                 </div>
                 <div className="broadcast-hint">
-                    {outOfSync ? (
-                        <span className="hint-warning">Tab pressed - device autocompleted, local input may differ</span>
+                    {isVimCommand ? (
+                        <span className="hint-vim">Vim command mode - Enter to execute</span>
+                    ) : outOfSync ? (
+                        <span className="hint-warning">Tab pressed - device autocompleted</span>
                     ) : enabledCount > 0 ? (
-                        <span className="hint-active">Live mode - keystrokes sent immediately</span>
+                        <span className="hint-active">Live: keystrokes sent to {enabledCount} terminal{enabledCount !== 1 ? "s" : ""}</span>
                     ) : (
                         <span className="hint-disabled">No terminals receiving broadcast</span>
                     )}

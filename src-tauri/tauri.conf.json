@@ -12,9 +12,12 @@
   "app": {
     "windows": [
       {
-        "title": "packet",
-        "width": 800,
-        "height": 600
+        "title": "Packet",
+        "width": 1280,
+        "height": 800,
+        "minWidth": 800,
+        "minHeight": 500,
+        "center": true
       }
     ],
     "security": {

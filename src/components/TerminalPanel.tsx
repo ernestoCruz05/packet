@@ -17,6 +17,15 @@ import { TerminalSession } from "../types/terminal";
 import { highlightCiscoOutput } from "../utils/ciscoHighlight";
 import "@xterm/xterm/css/xterm.css";
 
+// Track which sessions have been initialized to prevent double-spawning
+const initializedSessions = new Set<string>();
+
+// Store FitAddon instances globally so they survive React remounts
+const fitAddonMap = new Map<string, FitAddon>();
+
+// Store backend session IDs (pty/telnet) globally so they survive React remounts
+const backendSessionIdMap = new Map<string, string>();
+
 interface TerminalPanelProps {
     session: TerminalSession;
     isActive: boolean;
@@ -54,20 +63,77 @@ export function TerminalPanel({ session, isActive }: TerminalPanelProps) {
     const terminalInstanceRef = useRef<Terminal | null>(null);
     const fitAddonRef = useRef<FitAddon | null>(null);
     const sessionIdRef = useRef<string | null>(null);
-    const initializedRef = useRef(false);
     const { setTerminal, setSessionId } = useTerminals();
 
     // Refit terminal when it becomes active (tab selected)
     useEffect(() => {
-        if (isActive && fitAddonRef.current) {
-            setTimeout(() => fitAddonRef.current?.fit(), 10);
+        if (isActive && fitAddonRef.current && terminalInstanceRef.current) {
+            // Multiple refit attempts to handle visibility transitions
+            const timer1 = setTimeout(() => fitAddonRef.current?.fit(), 10);
+            const timer2 = setTimeout(() => fitAddonRef.current?.fit(), 100);
+            const timer3 = setTimeout(() => {
+                fitAddonRef.current?.fit();
+                terminalInstanceRef.current?.focus();
+            }, 200);
+            return () => {
+                clearTimeout(timer1);
+                clearTimeout(timer2);
+                clearTimeout(timer3);
+            };
         }
     }, [isActive]);
 
     // Main initialization effect
+    // Use session.sessionId to check if already connected (survives remounts)
     useEffect(() => {
-        if (initializedRef.current || !terminalRef.current) return;
-        initializedRef.current = true;
+        if (!terminalRef.current) return;
+
+        // If already initialized, re-attach the existing terminal's DOM to this container
+        // This handles React remounting the component with a new DOM element
+        if (initializedSessions.has(session.id) && session.terminal) {
+            console.log(`[Terminal ${session.id}] Re-attaching existing terminal to new container`);
+            terminalInstanceRef.current = session.terminal;
+
+            // Restore fitAddon ref from global map
+            const storedFitAddon = fitAddonMap.get(session.id);
+            if (storedFitAddon) {
+                fitAddonRef.current = storedFitAddon;
+            }
+
+            // Restore backend session ID (pty/telnet) from global map
+            const storedBackendId = backendSessionIdMap.get(session.id);
+            if (storedBackendId) {
+                sessionIdRef.current = storedBackendId;
+                console.log(`[Terminal ${session.id}] Restored backend session ID: ${storedBackendId}`);
+            }
+
+            // xterm stores its rendered DOM in terminal.element
+            // We need to move it to the new container div
+            const xtermElement = session.terminal.element;
+            if (xtermElement && terminalRef.current) {
+                // Clear the container and append the existing xterm element
+                terminalRef.current.innerHTML = '';
+                terminalRef.current.appendChild(xtermElement);
+
+                // Refit after re-attaching
+                setTimeout(() => {
+                    storedFitAddon?.fit();
+                    if (isActive) {
+                        session.terminal?.focus();
+                    }
+                }, 50);
+            }
+            return;
+        }
+
+        // If already in the set but no terminal object, something is wrong - skip
+        if (initializedSessions.has(session.id)) {
+            console.log(`[Terminal ${session.id}] Already initialized but no terminal object`);
+            return;
+        }
+
+        // Mark as initialized to prevent re-spawning on remounts
+        initializedSessions.add(session.id);
 
         console.log(`[Terminal ${session.id}] Initializing ${session.connectionType} session...`);
 
@@ -92,6 +158,8 @@ export function TerminalPanel({ session, isActive }: TerminalPanelProps) {
 
         terminalInstanceRef.current = terminal;
         fitAddonRef.current = fitAddon;
+        // Store fitAddon globally so it survives React remounts
+        fitAddonMap.set(session.id, fitAddon);
         setTerminal(session.id, terminal);
 
         let unlistenOutput: (() => void) | null = null;
@@ -114,6 +182,8 @@ export function TerminalPanel({ session, isActive }: TerminalPanelProps) {
                 console.log(`[Terminal ${session.id}] PTY spawned: ${ptyId}`);
 
                 sessionIdRef.current = ptyId;
+                // Store globally so it survives React remounts
+                backendSessionIdMap.set(session.id, ptyId);
                 setSessionId(session.id, ptyId);
 
                 unlistenOutput = await listen<{ ptyId: string; data: string }>(
@@ -125,16 +195,14 @@ export function TerminalPanel({ session, isActive }: TerminalPanelProps) {
                     }
                 );
 
+                // Use the ptyId directly (captured in closure) instead of ref
+                // This ensures input works even after React remounts
                 term.onData((data) => {
-                    if (sessionIdRef.current) {
-                        invoke("write_to_pty", { ptyId: sessionIdRef.current, data }).catch(console.error);
-                    }
+                    invoke("write_to_pty", { ptyId, data }).catch(console.error);
                 });
 
                 term.onResize(({ cols, rows }) => {
-                    if (sessionIdRef.current) {
-                        invoke("resize_pty", { ptyId: sessionIdRef.current, cols, rows }).catch(console.error);
-                    }
+                    invoke("resize_pty", { ptyId, cols, rows }).catch(console.error);
                 });
             } catch (error) {
                 console.error(`[Terminal ${session.id}] Failed to spawn PTY:`, error);
@@ -150,6 +218,8 @@ export function TerminalPanel({ session, isActive }: TerminalPanelProps) {
                 console.log(`[Terminal ${session.id}] Telnet connected: ${telnetSessionId}`);
 
                 sessionIdRef.current = telnetSessionId;
+                // Store globally so it survives React remounts
+                backendSessionIdMap.set(session.id, telnetSessionId);
                 setSessionId(session.id, telnetSessionId);
 
                 // Listen for telnet output with Cisco syntax highlighting
@@ -179,19 +249,17 @@ export function TerminalPanel({ session, isActive }: TerminalPanelProps) {
                 );
 
                 // Forward user input to telnet
+                // Use telnetSessionId directly (captured in closure) instead of ref
+                // This ensures input works even after React remounts
                 term.onData((data) => {
-                    if (sessionIdRef.current) {
-                        invoke("write_telnet", { sessionId: sessionIdRef.current, data }).catch(console.error);
-                    }
+                    invoke("write_telnet", { sessionId: telnetSessionId, data }).catch(console.error);
                 });
 
                 term.write(`\x1b[32mConnected to ${host}:${port}\x1b[0m\r\n\r\n`);
 
                 // Send initial Enter to get the prompt from the router
                 setTimeout(() => {
-                    if (sessionIdRef.current) {
-                        invoke("write_telnet", { sessionId: sessionIdRef.current, data: "\r\n" }).catch(console.error);
-                    }
+                    invoke("write_telnet", { sessionId: telnetSessionId, data: "\r\n" }).catch(console.error);
                 }, 500);
 
             } catch (error) {
