@@ -3,6 +3,7 @@
 //! This module handles the creation, management, and cleanup of PTY sessions
 //! for the Packet terminal broadcast application.
 
+use crate::logging::{cleanup_session_logs, write_to_logs};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use portable_pty::{native_pty_system, CommandBuilder, MasterPty, PtySize};
@@ -125,6 +126,10 @@ pub fn spawn_pty(
                 }
                 Ok(n) => {
                     let data = String::from_utf8_lossy(&buf[..n]).to_string();
+                    
+                    // Write to any active log files for this session
+                    write_to_logs(&pty_id_clone, &data);
+                    
                     let _ = app.emit(
                         "pty-output",
                         PtyOutput {
@@ -141,6 +146,7 @@ pub fn spawn_pty(
         }
         
         // Clean up session when reader exits
+        cleanup_session_logs(&pty_id_clone);
         let mut sessions = sessions_for_cleanup.lock();
         sessions.remove(&pty_id_clone);
         println!("[PTY] Session {} cleaned up. Remaining: {}", pty_id_clone, sessions.len());

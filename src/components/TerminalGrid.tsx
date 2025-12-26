@@ -91,7 +91,7 @@ function FolderIcon() {
 /**
  * Connection type indicator for tabs
  */
-function ConnectionTypeIndicator({ type, enabled }: { type: "local" | "telnet"; enabled: boolean }) {
+function ConnectionTypeIndicator({ type, enabled }: { type: "local" | "telnet" | "ssh"; enabled: boolean }) {
     if (type === "telnet") {
         return (
             <span className={`tab-type-indicator telnet ${enabled ? "broadcast" : ""}`} title="Telnet connection">
@@ -100,6 +100,15 @@ function ConnectionTypeIndicator({ type, enabled }: { type: "local" | "telnet"; 
                     <path d="M12 2a15.3 15.3 0 0 1 4 10 15.3 15.3 0 0 1-4 10" />
                     <path d="M12 2a15.3 15.3 0 0 0-4 10 15.3 15.3 0 0 0 4 10" />
                     <path d="M2 12h20" />
+                </svg>
+            </span>
+        );
+    }
+    if (type === "ssh") {
+        return (
+            <span className={`tab-type-indicator ssh ${enabled ? "broadcast" : ""}`} title="SSH connection">
+                <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5">
+                    <path d="M21 2l-2 2m-7.61 7.61a5.5 5.5 0 1 1-7.778 7.778 5.5 5.5 0 0 1 7.777-7.777zm0 0L15.5 7.5m0 0l3 3L22 7l-3-3m-3.5 3.5L19 4" />
                 </svg>
             </span>
         );

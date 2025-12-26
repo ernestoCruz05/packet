@@ -7,12 +7,15 @@
  * - Command history navigation (arrow keys)
  * - Cisco keyword highlighting and suggestions
  * - Vim-style commands:
- *   :l or :local - broadcast to current group only
- *   :a or :all   - broadcast to all terminals
- *   :g <name>    - broadcast to specific group
+ *   :l <filename>  - start logging to file
+ *   :el <filename> - end logging to file
+ *   :logs          - list active log files
+ *   :local         - broadcast to current group only
+ *   :a or :all     - broadcast to all terminals
+ *   :g <name>      - broadcast to specific group
  *   :m <pattern> <group> - move terminals matching pattern to group
- *   :m <pattern>  - remove terminals from group
- *   :s <group>   - switch to viewing a group (:s all for all)
+ *   :m <pattern>   - remove terminals from group
+ *   :s <group>     - switch to viewing a group (:s all for all)
  * 
  * Wildcard patterns for :m command:
  *   * matches any characters (e.g., R-* matches R-1, R-2, R-CID1)
@@ -20,6 +23,7 @@
  */
 
 import { useState, useRef, useCallback, useMemo } from "react";
+import { invoke } from "@tauri-apps/api/core";
 import { useTerminals } from "../context/TerminalContext";
 import { CiscoKeywords } from "../types/terminal";
 
@@ -48,7 +52,7 @@ export function BroadcastInput() {
     const [broadcastMode, setBroadcastMode] = useState<BroadcastMode>("all");
     const [customGroupId, setCustomGroupId] = useState<string | null>(null);
     const inputRef = useRef<HTMLInputElement>(null);
-    const { broadcastKeystroke, sessions, groups, activeGroupId, moveToGroup, setActiveGroup } = useTerminals();
+    const { broadcastKeystroke, sessions, groups, activeGroupId, activeSessionId, moveToGroup, setActiveGroup } = useTerminals();
 
     // Calculate which sessions will receive broadcasts based on mode
     const targetSessions = useMemo(() => {
@@ -101,9 +105,84 @@ export function BroadcastInput() {
      */
     const checkVimCommand = useCallback((line: string): boolean => {
         const trimmed = line.trim().toLowerCase();
+        const originalLine = line.trim(); // Keep original case for filenames
 
-        // :l or :local - broadcast to current group
-        if (trimmed === ":l" || trimmed === ":local") {
+        // :l <filename> - start logging (with space after :l)
+        if (trimmed.startsWith(":l ") && !trimmed.startsWith(":local") && !trimmed.startsWith(":logs")) {
+            const filename = originalLine.slice(3).trim();
+            if (filename && activeSessionId) {
+                // Find the session to get its backend session ID
+                const session = sessions.find(s => s.id === activeSessionId);
+                if (session?.sessionId) {
+                    invoke<{ success: boolean; message: string }>("start_logging", {
+                        sessionId: session.sessionId,
+                        filename
+                    }).then(result => {
+                        if (result.success) {
+                            console.log(`[Logging] ${result.message}`);
+                        } else {
+                            console.warn(`[Logging] ${result.message}`);
+                        }
+                    }).catch(err => {
+                        console.error(`[Logging] Failed to start logging:`, err);
+                    });
+                    setCurrentLine("");
+                    return true;
+                }
+            }
+        }
+
+        // :el <filename> - end logging
+        if (trimmed.startsWith(":el ")) {
+            const filename = originalLine.slice(4).trim();
+            if (filename && activeSessionId) {
+                const session = sessions.find(s => s.id === activeSessionId);
+                if (session?.sessionId) {
+                    invoke<{ success: boolean; message: string }>("stop_logging", {
+                        sessionId: session.sessionId,
+                        filename
+                    }).then(result => {
+                        if (result.success) {
+                            console.log(`[Logging] ${result.message}`);
+                        } else {
+                            console.warn(`[Logging] ${result.message}`);
+                        }
+                    }).catch(err => {
+                        console.error(`[Logging] Failed to stop logging:`, err);
+                    });
+                    setCurrentLine("");
+                    return true;
+                }
+            }
+        }
+
+        // :logs - list active log files for current session
+        if (trimmed === ":logs") {
+            if (activeSessionId) {
+                const session = sessions.find(s => s.id === activeSessionId);
+                if (session?.sessionId) {
+                    invoke<Array<{ path: string; startedAt: string }>>("list_session_logs", {
+                        sessionId: session.sessionId
+                    }).then(logs => {
+                        if (logs.length === 0) {
+                            console.log(`[Logging] No active logs for this session`);
+                        } else {
+                            console.log(`[Logging] Active logs:`);
+                            logs.forEach(log => {
+                                console.log(`  - ${log.path} (started: ${log.startedAt})`);
+                            });
+                        }
+                    }).catch(err => {
+                        console.error(`[Logging] Failed to list logs:`, err);
+                    });
+                    setCurrentLine("");
+                    return true;
+                }
+            }
+        }
+
+        // :local - broadcast to current group
+        if (trimmed === ":local") {
             if (activeGroupId) {
                 setBroadcastMode("group");
                 setCurrentLine("");

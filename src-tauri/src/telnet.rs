@@ -11,6 +11,7 @@
 //! - A reader thread that emits output events to the frontend
 //! - A writer for sending commands to the device
 
+use crate::logging::{cleanup_session_logs, write_to_logs};
 use once_cell::sync::Lazy;
 use parking_lot::Mutex;
 use serde::{Deserialize, Serialize};
@@ -172,6 +173,9 @@ pub fn connect_telnet(
                     // Process telnet protocol bytes and extract printable data
                     let data = process_telnet_data(&buf[..n]);
                     if !data.is_empty() {
+                        // Write to any active log files for this session
+                        write_to_logs(&session_id_clone, &data);
+                        
                         let _ = app.emit(
                             "telnet-output",
                             TelnetOutput {
@@ -205,6 +209,7 @@ pub fn connect_telnet(
         }
 
         // Clean up session
+        cleanup_session_logs(&session_id_clone);
         let mut sessions = sessions_for_cleanup.lock();
         sessions.remove(&session_id_clone);
         println!(

@@ -6,8 +6,10 @@
 //!
 //! # Features
 //!
-//! - Multiple concurrent terminal sessions (local PTY or telnet)
+//! - Multiple concurrent terminal sessions (local PTY, telnet, or SSH)
 //! - Telnet connections to GNS3 network devices
+//! - SSH connections to network devices and servers
+//! - Session logging with command-based control (:l/:el commands)
 //! - Broadcast commands to selected terminals
 //! - Per-terminal broadcast toggle
 //! - Full PTY support with resize handling
@@ -27,13 +29,20 @@
 //! and the Rust backend. Sessions can be either:
 //! - Local PTY sessions (bash/shell)
 //! - Telnet sessions (GNS3 routers/switches)
+//! - SSH sessions (network devices, servers)
 
 mod cli;
+mod logging;
+mod profiles;
 mod pty;
+mod ssh;
 mod telnet;
 
 use cli::{get_cli_connection, init_cli, parse_args_to_connection};
+use logging::{list_session_logs, start_logging, stop_logging};
+use profiles::{create_profile, delete_profile, get_profile, list_profiles, update_profile, ProfileStore};
 use pty::{kill_pty, resize_pty, spawn_pty, write_to_pty, PtyState};
+use ssh::{connect_ssh, disconnect_ssh, list_ssh_sessions, resize_ssh, write_ssh};
 use telnet::{connect_telnet, disconnect_telnet, list_telnet_sessions, write_telnet};
 use tauri::{Emitter, Manager};
 
@@ -83,6 +92,7 @@ pub fn run() {
             }
         }))
         .manage(PtyState::default())
+        .manage(ProfileStore::new())
         .invoke_handler(tauri::generate_handler![
             // PTY commands (local shell)
             spawn_pty,
@@ -94,6 +104,22 @@ pub fn run() {
             write_telnet,
             disconnect_telnet,
             list_telnet_sessions,
+            // SSH commands (network devices, servers)
+            connect_ssh,
+            write_ssh,
+            resize_ssh,
+            disconnect_ssh,
+            list_ssh_sessions,
+            // Logging commands
+            start_logging,
+            stop_logging,
+            list_session_logs,
+            // Profile commands
+            create_profile,
+            update_profile,
+            delete_profile,
+            list_profiles,
+            get_profile,
             // CLI commands
             get_cli_connection,
         ])

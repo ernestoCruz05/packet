@@ -14,7 +14,7 @@
 import React, { createContext, useContext, useState, useCallback, useRef, useEffect } from "react";
 import { v4 as uuidv4 } from "uuid";
 import { Terminal } from "@xterm/xterm";
-import { TerminalSession, TerminalState, LayoutMode, TabGroup } from "../types/terminal";
+import { TerminalSession, TerminalState, LayoutMode, TabGroup, SshConnection } from "../types/terminal";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { cleanupTerminalSession } from "../components/TerminalPanel";
@@ -192,6 +192,26 @@ export function TerminalProvider({ children }: TerminalProviderProps) {
     }, [activeGroupId]);
 
     /**
+     * Creates a new SSH session to a device or server
+     */
+    const addSshSession = useCallback((connection: SshConnection, name?: string) => {
+        const id = uuidv4();
+        const displayName = name || `${connection.username}@${connection.host}`;
+        const newSession: TerminalSession = {
+            id,
+            name: displayName,
+            connectionType: "ssh",
+            sshInfo: connection,
+            broadcastEnabled: true,
+            terminal: null,
+            sessionId: null,
+            groupId: activeGroupId,
+        };
+        setSessions((prev) => [...prev, newSession]);
+        setActiveSessionId(id);
+    }, [activeGroupId]);
+
+    /**
      * Removes a terminal session and cleans up its backend connection
      */
     const removeSession = useCallback((id: string) => {
@@ -203,6 +223,8 @@ export function TerminalProvider({ children }: TerminalProviderProps) {
                     invoke("kill_pty", { ptyId: session.sessionId }).catch(console.error);
                 } else if (session.connectionType === "telnet") {
                     invoke("disconnect_telnet", { sessionId: session.sessionId }).catch(console.error);
+                } else if (session.connectionType === "ssh") {
+                    invoke("disconnect_ssh", { sessionId: session.sessionId }).catch(console.error);
                 }
             }
 
@@ -285,6 +307,11 @@ export function TerminalProvider({ children }: TerminalProviderProps) {
                 }).catch((err) => console.error(`[Broadcast] Failed to send to ${session.name}:`, err));
             } else if (session.connectionType === "telnet") {
                 invoke("write_telnet", {
+                    sessionId: session.sessionId,
+                    data: key,
+                }).catch((err) => console.error(`[Broadcast] Failed to send to ${session.name}:`, err));
+            } else if (session.connectionType === "ssh") {
+                invoke("write_ssh", {
                     sessionId: session.sessionId,
                     data: key,
                 }).catch((err) => console.error(`[Broadcast] Failed to send to ${session.name}:`, err));
@@ -388,6 +415,7 @@ export function TerminalProvider({ children }: TerminalProviderProps) {
         layoutMode,
         addSession,
         addTelnetSession,
+        addSshSession,
         removeSession,
         setActiveSession,
         toggleBroadcast,

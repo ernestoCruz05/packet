@@ -12,7 +12,7 @@ import { Terminal } from "@xterm/xterm";
 /**
  * Connection type for terminal sessions
  */
-export type ConnectionType = "local" | "telnet";
+export type ConnectionType = "local" | "telnet" | "ssh";
 
 /**
  * Split direction for grid layouts
@@ -25,6 +25,51 @@ export type SplitDirection = "horizontal" | "vertical";
 export interface TelnetConnection {
     host: string;
     port: number;
+}
+
+/**
+ * SSH authentication method
+ */
+export type SshAuthType = "password" | "publickey";
+
+/**
+ * SSH connection parameters
+ */
+export interface SshConnection {
+    host: string;
+    port: number;
+    username: string;
+    authType: SshAuthType;
+    /** Password for password auth */
+    password?: string;
+    /** Path to private key file for publickey auth */
+    keyPath?: string;
+    /** Passphrase for encrypted private keys */
+    passphrase?: string;
+}
+
+/**
+ * Information about an active log file
+ */
+export interface LogFileInfo {
+    path: string;
+    startedAt: string;
+}
+
+/**
+ * A saved connection profile
+ */
+export interface ConnectionProfile {
+    id: string;
+    name: string;
+    connection_type: "ssh" | "telnet";
+    host: string;
+    port: number;
+    username?: string;
+    auth_method?: "password" | "publickey";
+    key_path?: string;
+    created_at: string;
+    updated_at: string;
 }
 
 /**
@@ -94,11 +139,14 @@ export interface TerminalSession {
     /** User-editable display name for the terminal tab */
     name: string;
 
-    /** Connection type: local shell or telnet to GNS3 */
+    /** Connection type: local shell, telnet, or SSH */
     connectionType: ConnectionType;
 
     /** Telnet connection info (only for telnet sessions) */
     telnetInfo?: TelnetConnection;
+
+    /** SSH connection info (only for SSH sessions) */
+    sshInfo?: SshConnection;
 
     /** Whether this terminal receives broadcast commands */
     broadcastEnabled: boolean;
@@ -106,11 +154,14 @@ export interface TerminalSession {
     /** Reference to the xterm.js Terminal instance (null until mounted) */
     terminal: Terminal | null;
 
-    /** Backend session identifier - PTY ID or telnet session ID (null until connected) */
+    /** Backend session identifier - PTY ID, telnet, or SSH session ID (null until connected) */
     sessionId: string | null;
 
     /** Group ID this session belongs to (null for ungrouped) */
     groupId: string | null;
+
+    /** Active log files for this session */
+    activeLogFiles?: LogFileInfo[];
 }
 
 /**
@@ -139,6 +190,9 @@ export interface TerminalState {
 
     /** Creates a new telnet session to a GNS3 device */
     addTelnetSession: (host: string, port: number, name?: string) => void;
+
+    /** Creates a new SSH session to a device/server */
+    addSshSession: (connection: SshConnection, name?: string) => void;
 
     /** Removes and cleans up a terminal session by ID */
     removeSession: (id: string) => void;
