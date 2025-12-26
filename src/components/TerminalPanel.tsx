@@ -10,6 +10,7 @@ import { useEffect, useRef } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
+import { Unicode11Addon } from "@xterm/addon-unicode11";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useTerminals } from "../context/TerminalContext";
@@ -170,15 +171,16 @@ export function TerminalPanel({ session, isActive }: TerminalPanelProps) {
       allowProposedApi: true,
       scrollback: 10000,
       tabStopWidth: 4,
-      // Fix for Unicode width calculation issues
-      unicodeVersion: '11',
     });
 
     const fitAddon = new FitAddon();
     const webLinksAddon = new WebLinksAddon();
+    const unicode11Addon = new Unicode11Addon();
 
     terminal.loadAddon(fitAddon);
     terminal.loadAddon(webLinksAddon);
+    terminal.loadAddon(unicode11Addon);
+    terminal.unicode.activeVersion = '11';
 
     terminal.open(terminalRef.current);
     fitAddon.fit();
