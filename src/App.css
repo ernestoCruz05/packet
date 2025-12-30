@@ -1904,3 +1904,152 @@ body {
   overflow: hidden;
   position: relative;
 }
+
+/* ==========================================
+   DRAG AND DROP TABS
+   ========================================== */
+
+.terminal-tab {
+  cursor: grab;
+  transition: transform 0.15s ease, opacity 0.15s ease, background-color 0.15s ease;
+}
+
+.terminal-tab:active {
+  cursor: grabbing;
+}
+
+.terminal-tab.dragging {
+  opacity: 0.5;
+  transform: scale(0.95);
+}
+
+.terminal-tab.drag-over {
+  background-color: rgba(88, 166, 255, 0.2);
+  border-left: 2px solid #58a6ff;
+}
+
+/* ==========================================
+   SEARCH BAR
+   ========================================== */
+
+.terminal-search-bar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 12px;
+  background-color: #161b22;
+  border-bottom: 1px solid #30363d;
+}
+
+.terminal-search-bar svg {
+  color: #8b949e;
+  flex-shrink: 0;
+}
+
+.terminal-search-bar input {
+  flex: 1;
+  background-color: #0d1117;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  padding: 6px 10px;
+  color: #c9d1d9;
+  font-size: 13px;
+  min-width: 200px;
+}
+
+.terminal-search-bar input:focus {
+  outline: none;
+  border-color: #58a6ff;
+}
+
+.terminal-search-bar input::placeholder {
+  color: #6e7681;
+}
+
+.search-nav-btn,
+.search-close-btn {
+  background-color: transparent;
+  border: 1px solid #30363d;
+  border-radius: 4px;
+  padding: 4px 8px;
+  color: #8b949e;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+
+.search-nav-btn:hover,
+.search-close-btn:hover {
+  background-color: #21262d;
+  color: #c9d1d9;
+}
+
+.search-close-btn {
+  padding: 4px 6px;
+}
+
+/* ==========================================
+   RECONNECT OVERLAY
+   ========================================== */
+
+.terminal-panel-simple {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.terminal-reconnect-overlay {
+  position: absolute;
+  bottom: 20px;
+  right: 20px;
+  z-index: 100;
+}
+
+.reconnect-btn {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 16px;
+  background-color: #238636;
+  border: none;
+  border-radius: 6px;
+  color: #fff;
+  font-size: 14px;
+  font-weight: 500;
+  cursor: pointer;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+  transition: background-color 0.15s ease, transform 0.15s ease;
+}
+
+.reconnect-btn:hover {
+  background-color: #2ea043;
+  transform: translateY(-1px);
+}
+
+.reconnect-btn:active {
+  transform: translateY(0);
+}
+
+.reconnect-btn svg {
+  flex-shrink: 0;
+}
+
+/* Connection state indicator on tabs */
+.terminal-tab.disconnected .tab-type-indicator {
+  color: #f85149 !important;
+}
+
+.terminal-tab.error .tab-type-indicator {
+  color: #f85149 !important;
+}
+
+.terminal-tab.connecting .tab-type-indicator {
+  color: #d29922 !important;
+  animation: pulse 1s infinite;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}

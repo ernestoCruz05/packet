@@ -14,7 +14,7 @@
 import React, { createContext, useContext, useState, useCallback, useRef, useEffect } from "react";
 import { v4 as uuidv4 } from "uuid";
 import { Terminal } from "@xterm/xterm";
-import { TerminalSession, TerminalState, LayoutMode, TabGroup, SshConnection } from "../types/terminal";
+import { TerminalSession, TerminalState, LayoutMode, TabGroup, SshConnection, ConnectionState } from "../types/terminal";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { cleanupTerminalSession } from "../components/TerminalPanel";
@@ -407,6 +407,56 @@ export function TerminalProvider({ children }: TerminalProviderProps) {
         );
     }, []);
 
+    /**
+     * Updates the connection state of a session
+     */
+    const setConnectionState = useCallback((id: string, state: ConnectionState) => {
+        setSessions((prev) =>
+            prev.map((s) => (s.id === id ? { ...s, connectionState: state } : s))
+        );
+    }, []);
+
+    /**
+     * Reconnects a disconnected telnet/SSH session
+     */
+    const reconnectSession = useCallback((id: string) => {
+        setSessions((prev) => {
+            const session = prev.find((s) => s.id === id);
+            if (!session) return prev;
+
+            // Clean up old backend session
+            if (session.sessionId) {
+                if (session.connectionType === "telnet") {
+                    invoke("disconnect_telnet", { sessionId: session.sessionId }).catch(() => {});
+                } else if (session.connectionType === "ssh") {
+                    invoke("disconnect_ssh", { sessionId: session.sessionId }).catch(() => {});
+                }
+            }
+
+            // Clean up frontend terminal state to allow re-initialization
+            cleanupTerminalSession(id);
+
+            // Reset session state to trigger reconnection
+            return prev.map((s) =>
+                s.id === id
+                    ? { ...s, sessionId: null, terminal: null, connectionState: "connecting" as ConnectionState }
+                    : s
+            );
+        });
+    }, []);
+
+    /**
+     * Reorders sessions (for drag and drop)
+     */
+    const reorderSessions = useCallback((fromIndex: number, toIndex: number) => {
+        setSessions((prev) => {
+            const newSessions = [...prev];
+            const [removed] = newSessions.splice(fromIndex, 1);
+            newSessions.splice(toIndex, 0, removed);
+            return newSessions;
+        });
+    }, []);
+
     const value: TerminalState = {
         sessions,
         groups,
@@ -429,6 +479,9 @@ export function TerminalProvider({ children }: TerminalProviderProps) {
         renameGroup,
         setActiveGroup,
         moveToGroup,
+        reconnectSession,
+        setConnectionState,
+        reorderSessions,
     };
 
     return (

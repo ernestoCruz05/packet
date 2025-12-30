@@ -73,6 +73,26 @@ export interface ConnectionProfile {
 }
 
 /**
+ * Connection state for terminal sessions
+ */
+export type ConnectionState = "connecting" | "connected" | "disconnected" | "error";
+
+/**
+ * Recent connection entry for quick connect
+ */
+export interface RecentConnection {
+    id: string;
+    name: string;
+    connectionType: "telnet" | "ssh";
+    host: string;
+    port: number;
+    username?: string;
+    authType?: SshAuthType;
+    keyPath?: string;
+    lastUsed: string;
+}
+
+/**
  * A pane in the split layout - either contains a terminal or is split into children
  */
 export interface SplitPane {
@@ -162,6 +182,9 @@ export interface TerminalSession {
 
     /** Active log files for this session */
     activeLogFiles?: LogFileInfo[];
+
+    /** Connection state for remote sessions */
+    connectionState?: ConnectionState;
 }
 
 /**
@@ -236,6 +259,15 @@ export interface TerminalState {
 
     /** Moves a session to a group */
     moveToGroup: (sessionId: string, groupId: string | null) => void;
+
+    /** Reconnects a disconnected session */
+    reconnectSession: (id: string) => void;
+
+    /** Updates the connection state of a session */
+    setConnectionState: (id: string, state: ConnectionState) => void;
+
+    /** Reorders sessions (for drag and drop) */
+    reorderSessions: (fromIndex: number, toIndex: number) => void;
 }
 
 /**

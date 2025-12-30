@@ -6,11 +6,12 @@
  * Handles communication, resize events, and user input.
  */
 
-import { useEffect, useRef } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
 import { Terminal } from "@xterm/xterm";
 import { FitAddon } from "@xterm/addon-fit";
 import { WebLinksAddon } from "@xterm/addon-web-links";
 import { Unicode11Addon } from "@xterm/addon-unicode11";
+import { SearchAddon } from "@xterm/addon-search";
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { useTerminals } from "../context/TerminalContext";
@@ -26,6 +27,9 @@ const fitAddonMap = new Map<string, FitAddon>();
 
 // Store backend session IDs (pty/telnet) globally so they survive React remounts
 const backendSessionIdMap = new Map<string, string>();
+
+// Store search addons globally for access from search UI
+const searchAddonMap = new Map<string, SearchAddon>();
 
 // Store unlisten functions globally - these should NOT be called on React unmount
 // They should only be cleaned up when the session is actually closed
@@ -50,6 +54,14 @@ export function cleanupTerminalSession(sessionId: string): void {
   initializedSessions.delete(sessionId);
   fitAddonMap.delete(sessionId);
   backendSessionIdMap.delete(sessionId);
+  searchAddonMap.delete(sessionId);
+}
+
+/**
+ * Get the search addon for a session (for use by search UI)
+ */
+export function getSearchAddon(sessionId: string): SearchAddon | undefined {
+  return searchAddonMap.get(sessionId);
 }
 
 interface TerminalPanelProps {
@@ -89,7 +101,8 @@ export function TerminalPanel({ session, isActive }: TerminalPanelProps) {
   const terminalInstanceRef = useRef<Terminal | null>(null);
   const fitAddonRef = useRef<FitAddon | null>(null);
   const sessionIdRef = useRef<string | null>(null);
-  const { setTerminal, setSessionId } = useTerminals();
+  const { setTerminal, setSessionId, setConnectionState, reconnectSession } = useTerminals();
+  const [isDisconnected, setIsDisconnected] = useState(false);
 
   // Refit terminal when it becomes active (tab selected)
   useEffect(() => {
@@ -176,10 +189,12 @@ export function TerminalPanel({ session, isActive }: TerminalPanelProps) {
     const fitAddon = new FitAddon();
     const webLinksAddon = new WebLinksAddon();
     const unicode11Addon = new Unicode11Addon();
+    const searchAddon = new SearchAddon();
 
     terminal.loadAddon(fitAddon);
     terminal.loadAddon(webLinksAddon);
     terminal.loadAddon(unicode11Addon);
+    terminal.loadAddon(searchAddon);
     terminal.unicode.activeVersion = '11';
 
     terminal.open(terminalRef.current);
@@ -189,6 +204,8 @@ export function TerminalPanel({ session, isActive }: TerminalPanelProps) {
     fitAddonRef.current = fitAddon;
     // Store fitAddon globally so it survives React remounts
     fitAddonMap.set(session.id, fitAddon);
+    // Store searchAddon globally for search UI access
+    searchAddonMap.set(session.id, searchAddon);
     setTerminal(session.id, terminal);
 
     if (session.connectionType === "local") {
@@ -273,8 +290,13 @@ export function TerminalPanel({ session, isActive }: TerminalPanelProps) {
             if (event.payload.sessionId === telnetSessionId) {
               if (event.payload.status === "disconnected") {
                 term.write(`\r\n\x1b[33m[Disconnected] ${event.payload.message}\x1b[0m\r\n`);
+                term.write(`\x1b[90mPress the reconnect button or use :reconnect to reconnect.\x1b[0m\r\n`);
+                setIsDisconnected(true);
+                setConnectionState(session.id, "disconnected");
               } else if (event.payload.status === "error") {
                 term.write(`\r\n\x1b[31m[Error] ${event.payload.message}\x1b[0m\r\n`);
+                setIsDisconnected(true);
+                setConnectionState(session.id, "error");
               }
             }
           }
@@ -291,6 +313,8 @@ export function TerminalPanel({ session, isActive }: TerminalPanelProps) {
         });
 
         term.write(`\x1b[32mConnected to ${host}:${port}\x1b[0m\r\n\r\n`);
+        setIsDisconnected(false);
+        setConnectionState(session.id, "connected");
 
         // Send initial Enter to get the prompt from the router
         setTimeout(() => {
@@ -301,6 +325,9 @@ export function TerminalPanel({ session, isActive }: TerminalPanelProps) {
         console.error(`[Terminal ${session.id}] Failed to connect:`, error);
         term.write(`\r\n\x1b[31mConnection failed: ${error}\x1b[0m\r\n`);
         term.write("\x1b[90mCheck that GNS3 is running and the device is started.\x1b[0m\r\n");
+        term.write(`\x1b[90mPress the reconnect button to try again.\x1b[0m\r\n`);
+        setIsDisconnected(true);
+        setConnectionState(session.id, "error");
       }
     }
 
@@ -349,8 +376,13 @@ export function TerminalPanel({ session, isActive }: TerminalPanelProps) {
             if (event.payload.sessionId === sshSessionId) {
               if (event.payload.status === "disconnected") {
                 term.write(`\r\n\x1b[33m[Disconnected] ${event.payload.message}\x1b[0m\r\n`);
+                term.write(`\x1b[90mPress the reconnect button to reconnect.\x1b[0m\r\n`);
+                setIsDisconnected(true);
+                setConnectionState(session.id, "disconnected");
               } else if (event.payload.status === "error") {
                 term.write(`\r\n\x1b[31m[Error] ${event.payload.message}\x1b[0m\r\n`);
+                setIsDisconnected(true);
+                setConnectionState(session.id, "error");
               }
             }
           }
@@ -369,11 +401,16 @@ export function TerminalPanel({ session, isActive }: TerminalPanelProps) {
         });
 
         term.write(`\x1b[32mConnected to ${sshInfo.username}@${sshInfo.host}:${sshInfo.port}\x1b[0m\r\n\r\n`);
+        setIsDisconnected(false);
+        setConnectionState(session.id, "connected");
 
       } catch (error) {
         console.error(`[Terminal ${session.id}] SSH connection failed:`, error);
         term.write(`\r\n\x1b[31mSSH Connection failed: ${error}\x1b[0m\r\n`);
         term.write("\x1b[90mCheck host, port, username, and authentication credentials.\x1b[0m\r\n");
+        term.write(`\x1b[90mPress the reconnect button to try again.\x1b[0m\r\n`);
+        setIsDisconnected(true);
+        setConnectionState(session.id, "error");
       }
     }
 
@@ -404,9 +441,26 @@ export function TerminalPanel({ session, isActive }: TerminalPanelProps) {
     };
   }, []);
 
+  const handleReconnect = useCallback(() => {
+    setIsDisconnected(false);
+    reconnectSession(session.id);
+  }, [reconnectSession, session.id]);
+
   return (
     <div className="terminal-panel-simple">
       <div ref={terminalRef} className="terminal-container" />
+      {isDisconnected && session.connectionType !== "local" && (
+        <div className="terminal-reconnect-overlay">
+          <button className="reconnect-btn" onClick={handleReconnect}>
+            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+              <path d="M23 4v6h-6" />
+              <path d="M1 20v-6h6" />
+              <path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15" />
+            </svg>
+            Reconnect
+          </button>
+        </div>
+      )}
     </div>
   );
 }

@@ -17,6 +17,7 @@ import { useTerminals } from "../context/TerminalContext";
 
 interface KeyboardShortcutsOptions {
     onOpenConnectDialog?: () => void;
+    onToggleSearch?: () => void;
 }
 
 export function useKeyboardShortcuts(options: KeyboardShortcutsOptions = {}) {
@@ -98,6 +99,13 @@ export function useKeyboardShortcuts(options: KeyboardShortcutsOptions = {}) {
             if (activeSessionId) {
                 toggleBroadcast(activeSessionId);
             }
+            return;
+        }
+
+        // Ctrl+Shift+F: Toggle search
+        if (e.ctrlKey && e.shiftKey && e.key.toLowerCase() === "f") {
+            e.preventDefault();
+            options.onToggleSearch?.();
             return;
         }
 

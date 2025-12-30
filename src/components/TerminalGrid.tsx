@@ -7,9 +7,9 @@
  * Includes tab groups for organizing terminals.
  */
 
-import { useState, useCallback, useMemo } from "react";
+import { useState, useCallback, useMemo, useRef, useEffect } from "react";
 import { useTerminals } from "../context/TerminalContext";
-import { TerminalPanel } from "./TerminalPanel";
+import { TerminalPanel, getSearchAddon } from "./TerminalPanel";
 import { ConnectDialog } from "./ConnectDialog";
 import { useKeyboardShortcuts } from "../hooks/useKeyboardShortcuts";
 import { useResizableGrid } from "../hooks/useResizableGrid";
@@ -73,6 +73,18 @@ function TabsIcon() {
             <rect x="3" y="3" width="18" height="18" rx="2" />
             <path d="M3 9h18" />
             <path d="M9 3v6" />
+        </svg>
+    );
+}
+
+/**
+ * Search icon
+ */
+function SearchIcon() {
+    return (
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+            <circle cx="11" cy="11" r="8" />
+            <path d="M21 21l-4.35-4.35" />
         </svg>
     );
 }
@@ -168,15 +180,31 @@ export function TerminalGrid() {
         removeGroup,
         renameGroup,
         setActiveGroup,
+        reorderSessions,
     } = useTerminals();
     const [isConnectDialogOpen, setConnectDialogOpen] = useState(false);
     const [isGroupMenuOpen, setGroupMenuOpen] = useState(false);
     const [newGroupName, setNewGroupName] = useState("");
     const [editingGroupId, setEditingGroupId] = useState<string | null>(null);
 
+    // Drag and drop state
+    const [draggedIndex, setDraggedIndex] = useState<number | null>(null);
+    const [dragOverIndex, setDragOverIndex] = useState<number | null>(null);
+
+    // Search state
+    const [isSearchOpen, setIsSearchOpen] = useState(false);
+    const [searchQuery, setSearchQuery] = useState("");
+    const searchInputRef = useRef<HTMLInputElement>(null);
+
     // Enable keyboard shortcuts
     const openConnectDialog = useCallback(() => setConnectDialogOpen(true), []);
-    useKeyboardShortcuts({ onOpenConnectDialog: openConnectDialog });
+    const toggleSearch = useCallback(() => {
+        setIsSearchOpen(prev => !prev);
+        if (!isSearchOpen) {
+            setTimeout(() => searchInputRef.current?.focus(), 50);
+        }
+    }, [isSearchOpen]);
+    useKeyboardShortcuts({ onOpenConnectDialog: openConnectDialog, onToggleSearch: toggleSearch });
 
     // Filter sessions by active group
     const filteredSessions = useMemo(() => {
@@ -197,6 +225,74 @@ export function TerminalGrid() {
         e.stopPropagation();
         removeSession(sessionId);
     };
+
+    // Search handlers
+    const handleSearch = useCallback((direction: "next" | "prev" = "next") => {
+        if (!activeSessionId || !searchQuery) return;
+        const searchAddon = getSearchAddon(activeSessionId);
+        if (searchAddon) {
+            const options = { caseSensitive: false, wholeWord: false, regex: false };
+            if (direction === "next") {
+                searchAddon.findNext(searchQuery, options);
+            } else {
+                searchAddon.findPrevious(searchQuery, options);
+            }
+        }
+    }, [activeSessionId, searchQuery]);
+
+    const handleSearchKeyDown = useCallback((e: React.KeyboardEvent) => {
+        if (e.key === "Enter") {
+            handleSearch(e.shiftKey ? "prev" : "next");
+        } else if (e.key === "Escape") {
+            setIsSearchOpen(false);
+            setSearchQuery("");
+            // Clear search highlighting
+            if (activeSessionId) {
+                const searchAddon = getSearchAddon(activeSessionId);
+                searchAddon?.clearDecorations();
+            }
+        }
+    }, [handleSearch, activeSessionId]);
+
+    // Trigger search when query changes
+    useEffect(() => {
+        if (searchQuery && activeSessionId) {
+            handleSearch("next");
+        }
+    }, [searchQuery]);
+
+    // Drag and drop handlers
+    const handleDragStart = useCallback((e: React.DragEvent, index: number) => {
+        setDraggedIndex(index);
+        e.dataTransfer.effectAllowed = "move";
+        e.dataTransfer.setData("text/plain", index.toString());
+        // Add a slight delay to show the dragging state
+        setTimeout(() => {
+            (e.target as HTMLElement).classList.add("dragging");
+        }, 0);
+    }, []);
+
+    const handleDragOver = useCallback((e: React.DragEvent, index: number) => {
+        e.preventDefault();
+        e.dataTransfer.dropEffect = "move";
+        setDragOverIndex(index);
+    }, []);
+
+    const handleDragEnd = useCallback((e: React.DragEvent) => {
+        (e.target as HTMLElement).classList.remove("dragging");
+        setDraggedIndex(null);
+        setDragOverIndex(null);
+    }, []);
+
+    const handleDrop = useCallback((e: React.DragEvent, toIndex: number) => {
+        e.preventDefault();
+        const fromIndex = draggedIndex;
+        if (fromIndex !== null && fromIndex !== toIndex) {
+            reorderSessions(fromIndex, toIndex);
+        }
+        setDraggedIndex(null);
+        setDragOverIndex(null);
+    }, [draggedIndex, reorderSessions]);
 
     const handleTabDoubleClick = (_e: React.MouseEvent, sessionId: string) => {
         toggleBroadcast(sessionId);
@@ -322,13 +418,19 @@ export function TerminalGrid() {
                 <div className="terminal-tabs">
                     {filteredSessions.map((session) => {
                         const group = getGroupForSession(session.groupId);
+                        const globalIndex = sessions.findIndex(s => s.id === session.id);
                         return (
                             <div
                                 key={session.id}
-                                className={`terminal-tab ${session.id === activeSessionId ? "active" : ""} ${session.broadcastEnabled ? "broadcast-enabled" : ""} ${session.connectionType}`}
+                                className={`terminal-tab ${session.id === activeSessionId ? "active" : ""} ${session.broadcastEnabled ? "broadcast-enabled" : ""} ${session.connectionType} ${dragOverIndex === globalIndex ? "drag-over" : ""}`}
                                 onClick={() => setActiveSession(session.id)}
                                 onDoubleClick={(e) => handleTabDoubleClick(e, session.id)}
-                                title={`${session.name} (${session.connectionType})${session.broadcastEnabled ? " - Broadcast ON" : " - Broadcast OFF"}${group ? ` [${group.name}]` : ""}\nDouble-click to toggle broadcast\nUse :m <name> <group> to move`}
+                                draggable
+                                onDragStart={(e) => handleDragStart(e, globalIndex)}
+                                onDragOver={(e) => handleDragOver(e, globalIndex)}
+                                onDragEnd={handleDragEnd}
+                                onDrop={(e) => handleDrop(e, globalIndex)}
+                                title={`${session.name} (${session.connectionType})${session.broadcastEnabled ? " - Broadcast ON" : " - Broadcast OFF"}${group ? ` [${group.name}]` : ""}\nDouble-click to toggle broadcast\nDrag to reorder`}
                                 style={group ? { borderTopColor: group.color } : undefined}
                             >
                                 <ConnectionTypeIndicator type={session.connectionType} enabled={session.broadcastEnabled} />
@@ -352,6 +454,15 @@ export function TerminalGrid() {
                     })}
                 </div>
                 <div className="tab-actions">
+                    {activeSessionId && (
+                        <button
+                            className={`tab-action-btn ${isSearchOpen ? "active" : ""}`}
+                            onClick={toggleSearch}
+                            title="Search in Terminal (Ctrl+Shift+F)"
+                        >
+                            <SearchIcon />
+                        </button>
+                    )}
                     <button
                         className="tab-action-btn"
                         onClick={() => setGroupMenuOpen(true)}
@@ -388,6 +499,54 @@ export function TerminalGrid() {
                     </button>
                 </div>
             </div>
+
+            {/* Search Bar */}
+            {isSearchOpen && (
+                <div className="terminal-search-bar">
+                    <SearchIcon />
+                    <input
+                        ref={searchInputRef}
+                        type="text"
+                        placeholder="Search in terminal..."
+                        value={searchQuery}
+                        onChange={(e) => setSearchQuery(e.target.value)}
+                        onKeyDown={handleSearchKeyDown}
+                        autoFocus
+                    />
+                    <button
+                        className="search-nav-btn"
+                        onClick={() => handleSearch("prev")}
+                        title="Previous match (Shift+Enter)"
+                    >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M18 15l-6-6-6 6" />
+                        </svg>
+                    </button>
+                    <button
+                        className="search-nav-btn"
+                        onClick={() => handleSearch("next")}
+                        title="Next match (Enter)"
+                    >
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2">
+                            <path d="M6 9l6 6 6-6" />
+                        </svg>
+                    </button>
+                    <button
+                        className="search-close-btn"
+                        onClick={() => {
+                            setIsSearchOpen(false);
+                            setSearchQuery("");
+                            if (activeSessionId) {
+                                const searchAddon = getSearchAddon(activeSessionId);
+                                searchAddon?.clearDecorations();
+                            }
+                        }}
+                        title="Close (Escape)"
+                    >
+                        <CloseIcon />
+                    </button>
+                </div>
+            )}
 
             {/* Terminal Content Area */}
             <div className={`terminal-content ${layoutMode === "grid" ? "grid-mode" : ""}`}>
